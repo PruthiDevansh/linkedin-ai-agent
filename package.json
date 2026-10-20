@@ -1,0 +1,29 @@
+{
+  "name": "linkedin-ai-agent",
+  "version": "0.1.0",
+  "private": true,
+  "description": "AI agent that finds today's trending news, drafts a LinkedIn post, and publishes it after your approval on Telegram.",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "typecheck": "tsc --noEmit",
+    "preview": "tsx scripts/preview.ts"
+  },
+  "dependencies": {
+    "@upstash/redis": "1.39.0",
+    "next": "16.4.2",
+    "react": "19.3.1",
+    "react-dom": "19.3.1",
+    "rss-parser": "3.13.0"
+  },
+  "devDependencies": {
+    "@types/node": "22.15.30",
+    "@types/react": "19.3.0",
+    "tsx": "4.23.15",
+    "typescript": "5.9.3"
+  },
+  "engines": {
+    "node": ">=20.9"
+  }
+}
