@@ -1,9 +1,11 @@
 import { randomUUID } from "node:crypto";
 import { env } from "./config";
+import { renderImage } from "./image";
 import { LinkedInAuthError, publishPost } from "./linkedin";
 import { fetchTrendingSearches, findCandidates } from "./sources";
 import {
   getDraft,
+  getLastPendingDraft,
   getLinkedInToken,
   getUsedLinks,
   lockDraft,
@@ -12,14 +14,46 @@ import {
   unlockDraft,
   type Draft,
 } from "./store";
-import { removeButtons, sendDraft, sendText } from "./telegram";
+import { deleteMessage, downloadFile, removeButtons, sendDraft, sendPhoto, sendText } from "./telegram";
 import { categoryForToday, type CategoryId } from "./topics";
+import { nextImageKind } from "./visual";
 import { writeFromIdea, writePost } from "./writer";
 
 const RECONNECT_WARNING_DAYS = 7;
 
 export function linkedInConnectUrl() {
   return `${env.appUrl}/api/linkedin/auth?key=${encodeURIComponent(env.adminSecret)}`;
+}
+
+// The PNG/JPEG bytes for the draft's image, or null for a text-only post.
+async function imageBytes(draft: Draft): Promise<ArrayBuffer | null> {
+  if (draft.image === "photo" && draft.photoFileId) return downloadFile(draft.photoFileId);
+  if ((draft.image === "card" || draft.image === "flowchart") && draft.visual) {
+    return renderImage(draft.image, draft.visual);
+  }
+  return null;
+}
+
+// Send (or re-send) a draft to Telegram: image first, then the text with buttons.
+async function showDraft(draft: Draft) {
+  if (draft.imageMessageId) await deleteMessage(draft.imageMessageId);
+  if (draft.telegramMessageId) await removeButtons(draft.telegramMessageId);
+  draft.imageMessageId = undefined;
+
+  try {
+    const photo = draft.image === "photo" ? draft.photoFileId : await imageBytes(draft);
+    if (photo) draft.imageMessageId = await sendPhoto(photo, "🖼 Image for the draft below");
+  } catch (err) {
+    // A broken image should never block the post itself.
+    console.error("Image failed:", err);
+    draft.image = "none";
+  }
+  draft.telegramMessageId = await sendDraft(draft);
+  await saveDraft(draft);
+}
+
+function newDraft(fields: Omit<Draft, "id" | "status" | "createdAt">): Draft {
+  return { id: randomUUID().slice(0, 8), status: "pending", createdAt: new Date().toISOString(), ...fields };
 }
 
 // Find news, write a post, and send it to Telegram for approval.
@@ -32,46 +66,75 @@ export async function createAndSendDraft(category: CategoryId = categoryForToday
   }
 
   const content = await writePost(category, candidates, trending);
-  const draft: Draft = {
-    id: randomUUID().slice(0, 8),
+  const draft = newDraft({
     category,
     topic: content.topic,
     sourceTitle: content.sourceTitle,
     sourceUrl: content.sourceUrl,
     text: content.post,
-    status: "pending",
-    createdAt: new Date().toISOString(),
-  };
+    visual: content.visual,
+    image: content.visual.suggested,
+  });
   await markLinkUsed(draft.sourceUrl);
-  draft.telegramMessageId = await sendDraft(draft);
-  await saveDraft(draft);
+  await showDraft(draft);
   return draft;
 }
 
-// Turn your own short idea into a post and send it for approval.
-export async function createDraftFromIdea(idea: string): Promise<Draft> {
-  const text = await writeFromIdea(idea);
-  const draft: Draft = {
-    id: randomUUID().slice(0, 8),
+// Turn your own short idea into a post. Attach your photo if you sent one.
+export async function createDraftFromIdea(idea: string, photoFileId?: string): Promise<Draft> {
+  const { post, visual } = await writeFromIdea(idea);
+  const draft = newDraft({
     category: "idea",
     idea,
     topic: idea.slice(0, 80),
     sourceTitle: "",
     sourceUrl: "",
-    text,
-    status: "pending",
-    createdAt: new Date().toISOString(),
-  };
-  draft.telegramMessageId = await sendDraft(draft);
-  await saveDraft(draft);
+    text: post,
+    visual,
+    image: photoFileId ? "photo" : visual.suggested,
+    photoFileId,
+  });
+  await showDraft(draft);
   return draft;
 }
 
 // Re-show a draft (for example after you edit it) with fresh buttons.
 export async function resendDraft(draft: Draft) {
-  if (draft.telegramMessageId) await removeButtons(draft.telegramMessageId);
-  draft.telegramMessageId = await sendDraft(draft);
-  await saveDraft(draft);
+  await showDraft(draft);
+}
+
+// 🖼 button: card -> flowchart -> no image -> card ...
+export async function changeImage(id: string) {
+  const draft = await getDraft(id);
+  if (!draft || draft.status !== "pending") return;
+  draft.image = nextImageKind(draft.image ?? "none", draft.visual);
+  if (draft.image === "none" && !draft.visual) {
+    return sendText("This draft was made before images existed. Send /draft for a new one with an image.");
+  }
+  await showDraft(draft);
+}
+
+export async function removeImage(id: string) {
+  const draft = await getDraft(id);
+  if (!draft || draft.status !== "pending") return;
+  draft.image = "none";
+  await showDraft(draft);
+}
+
+// A photo you send: with a caption it becomes a new post, without one it
+// replaces the image of your latest draft.
+export async function handlePhoto(fileId: string, caption: string) {
+  if (caption.length >= 15) {
+    await sendText("✍️ Writing a post from your idea and photo…");
+    return createDraftFromIdea(caption.slice(0, 1500), fileId);
+  }
+  const draft = await getLastPendingDraft();
+  if (!draft) {
+    return sendText("📷 Got your photo! Send it again with a caption (your idea), and I'll write a post around it.");
+  }
+  draft.image = "photo";
+  draft.photoFileId = fileId;
+  await showDraft(draft);
 }
 
 export async function approveAndPublish(id: string) {
@@ -85,12 +148,14 @@ export async function approveAndPublish(id: string) {
     if (!token) {
       return sendText(`🔗 Connect LinkedIn first, then tap Post again:\n${linkedInConnectUrl()}`);
     }
-    const postUrl = await publishPost(token, draft.text);
+    const bytes = await imageBytes(draft);
+    const image = bytes ? { bytes, altText: draft.visual?.title ?? draft.topic } : undefined;
+    const postUrl = await publishPost(token, draft.text, image);
     draft.status = "posted";
     draft.postUrl = postUrl;
     await saveDraft(draft);
     if (draft.telegramMessageId) await removeButtons(draft.telegramMessageId);
-    await sendText(`✅ Posted on LinkedIn!\n${postUrl}`);
+    await sendText(`✅ Posted on LinkedIn${image ? " with the image" : ""}!\n${postUrl}`);
   } catch (err) {
     if (err instanceof LinkedInAuthError) {
       return sendText(`🔗 Your LinkedIn login expired. Reconnect, then tap Post again:\n${linkedInConnectUrl()}`);

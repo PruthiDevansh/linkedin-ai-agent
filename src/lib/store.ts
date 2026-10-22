@@ -1,5 +1,6 @@
 import { Redis } from "@upstash/redis";
 import type { CategoryId } from "./topics";
+import type { ImageKind, Visual } from "./visual";
 
 export type DraftStatus = "pending" | "posted" | "skipped";
 
@@ -16,6 +17,11 @@ export type Draft = {
   createdAt: string;
   telegramMessageId?: number;
   postUrl?: string;
+  // Image shown with the post. Older drafts have none of these fields.
+  visual?: Visual;
+  image?: ImageKind;
+  photoFileId?: string; // your own photo, sent on Telegram
+  imageMessageId?: number;
 };
 
 export type LinkedInToken = {
@@ -42,6 +48,14 @@ function redis(): Redis {
 
 export async function saveDraft(draft: Draft): Promise<void> {
   await redis().set(`draft:${draft.id}`, draft, { ex: WEEK_SECONDS });
+  if (draft.status === "pending") await redis().set("last_draft", draft.id, { ex: WEEK_SECONDS });
+}
+
+// The newest pending draft, so a photo you send can be attached to it.
+export async function getLastPendingDraft(): Promise<Draft | null> {
+  const id = await redis().get<string>("last_draft");
+  const draft = id ? await getDraft(id) : null;
+  return draft?.status === "pending" ? draft : null;
 }
 
 export async function getDraft(id: string): Promise<Draft | null> {

@@ -2,12 +2,14 @@ import { env } from "./config";
 import { PROFILE } from "./profile";
 import type { Candidate } from "./sources";
 import { CATEGORIES, type CategoryId } from "./topics";
+import { normalizeVisual, VISUAL_INSTRUCTIONS, type Visual } from "./visual";
 
 export type PostContent = {
   topic: string;
   sourceTitle: string;
   sourceUrl: string;
   post: string;
+  visual: Visual;
 };
 
 const MAX_POST_CHARS = 2800; // LinkedIn allows 3000
@@ -77,8 +79,10 @@ function userPrompt(candidates: Candidate[], trending: string[]): string {
       : "",
     "",
     "Pick the ONE headline most likely to get engagement from this audience and write the post about it.",
-    'Reply with JSON only: {"topic": string, "sourceTitle": string, "sourceUrl": string, "post": string}',
+    'Reply with JSON only: {"topic": string, "sourceTitle": string, "sourceUrl": string, "post": string, "visual": object}',
     "sourceTitle and sourceUrl must be copied exactly from the headline you chose.",
+    "",
+    VISUAL_INSTRUCTIONS,
   ].join("\n");
 }
 
@@ -147,7 +151,9 @@ async function callGeminiModel(model: string, system: string, prompt: string, ti
 }
 
 function parseContent(raw: string, candidates: Candidate[]): PostContent {
-  const json = JSON.parse(raw.replace(/^```(?:json)?\s*|\s*```$/g, "")) as Partial<PostContent>;
+  const json = JSON.parse(raw.replace(/^```(?:json)?\s*|\s*```$/g, "")) as Partial<
+    Omit<PostContent, "visual"> & { visual: unknown }
+  >;
   const post = json.post?.trim();
   if (!post) throw new Error("Gemini answer had no post text.");
 
@@ -157,11 +163,13 @@ function parseContent(raw: string, candidates: Candidate[]): PostContent {
     candidates.find((c) => c.title === json.sourceTitle) ??
     candidates[0];
 
+  const topic = json.topic?.trim() || chosen.title;
   return {
-    topic: json.topic?.trim() || chosen.title,
+    topic,
     sourceTitle: chosen.title,
     sourceUrl: chosen.url,
     post: post.slice(0, MAX_POST_CHARS),
+    visual: normalizeVisual(json.visual, topic),
   };
 }
 
@@ -185,16 +193,19 @@ export async function writePost(
 }
 
 // Your own short idea -> a full post. No news source involved.
-export async function writeFromIdea(idea: string): Promise<string> {
+export async function writeFromIdea(idea: string): Promise<{ post: string; visual: Visual }> {
   const prompt = [
     `My idea: ${idea}`,
     "",
-    'Reply with JSON only: {"post": string}',
+    'Reply with JSON only: {"post": string, "visual": object}',
+    "",
+    VISUAL_INSTRUCTIONS,
   ].join("\n");
   const parse = (raw: string) => {
-    const post = (JSON.parse(raw.replace(/^```(?:json)?\s*|\s*```$/g, "")) as { post?: string }).post?.trim();
+    const json = JSON.parse(raw.replace(/^```(?:json)?\s*|\s*```$/g, "")) as { post?: string; visual?: unknown };
+    const post = json.post?.trim();
     if (!post) throw new Error("Gemini answer had no post text.");
-    return post.slice(0, MAX_POST_CHARS);
+    return { post: post.slice(0, MAX_POST_CHARS), visual: normalizeVisual(json.visual, idea) };
   };
 
   const raw = await callGemini(ideaSystemPrompt(), prompt);

@@ -3,6 +3,7 @@
 
 export const PROFILE = {
   name: "Devansh",
+  fullName: "Devansh Pruthi", // shown on post images
   about:
     "Backend developer (.NET / C#) building fintech and payments systems in India. Follows AI, new AI models, startups and tech careers closely.",
   audience:

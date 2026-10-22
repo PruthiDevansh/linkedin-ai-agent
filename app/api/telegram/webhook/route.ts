@@ -1,7 +1,10 @@
 import {
   approveAndPublish,
+  changeImage,
   createAndSendDraft,
   createDraftFromIdea,
+  handlePhoto,
+  removeImage,
   linkedInConnectUrl,
   linkedInStatus,
   resendDraft,
@@ -35,6 +38,8 @@ const HELP = [
   "/draft fintech — make a draft on a topic",
   "/write your idea — turn your own idea into a post",
   "Or just send me any idea as a message 💡",
+  "📷 Send a photo with a caption to post about it, or a photo alone to use it on your latest draft",
+  "🖼 Drafts come with a card or flowchart image; use the buttons to change or remove it",
   "/topics — list topics",
   "/status — LinkedIn connection",
 ].join("\n");
@@ -56,7 +61,9 @@ export async function POST(req: Request) {
   if (String(chatId) !== env.telegramChatId) return Response.json({ ok: true });
 
   try {
+    const photo = update.message?.photo?.at(-1); // largest size
     if (update.callback_query) await handleButton(update.callback_query.id, update.callback_query.data ?? "");
+    else if (photo) await handlePhoto(photo.file_id, update.message?.caption?.trim() ?? "");
     else if (update.message?.text) await handleText(update.message.text.trim());
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
@@ -75,10 +82,14 @@ async function handleButton(callbackId: string, data: string) {
     regen: "Writing a new draft…",
     skip: "Skipped",
     idea: "Waiting for your idea",
+    img: "Changing image…",
+    noimg: "Image removed",
   };
   await answerCallback(callbackId, labels[action]);
 
   if (action === "post") return approveAndPublish(id);
+  if (action === "img") return changeImage(id);
+  if (action === "noimg") return removeImage(id);
   if (action === "skip") return skipDraft(id);
   if (action === "edit") {
     await setAwaitingIdea(false);

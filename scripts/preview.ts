@@ -37,6 +37,8 @@ async function main() {
     console.log(`Source: ${content.sourceTitle}\n${content.sourceUrl}\n`);
     console.log("──────── LinkedIn post ────────\n");
     console.log(content.post);
+    console.log("\n──────── Image plan ────────\n");
+    console.log(JSON.stringify(content.visual, null, 2));
   }
 }
 

@@ -5,7 +5,13 @@ import { CATEGORIES } from "./topics";
 type InlineButton = { text: string; callback_data: string };
 
 export type TelegramUpdate = {
-  message?: { message_id: number; chat: { id: number }; text?: string };
+  message?: {
+    message_id: number;
+    chat: { id: number };
+    text?: string;
+    caption?: string;
+    photo?: { file_id: string; width: number; height: number }[]; // smallest to largest
+  };
   callback_query?: {
     id: string;
     data?: string;
@@ -41,18 +47,70 @@ export async function askForEditedText() {
   });
 }
 
-function draftButtons(id: string): InlineButton[][] {
+function draftButtons(draft: Draft): InlineButton[][] {
+  const id = draft.id;
+  const hasImage = draft.image && draft.image !== "none";
   return [
     [
       { text: "✅ Post to LinkedIn", callback_data: `post:${id}` },
       { text: "✏️ Edit", callback_data: `edit:${id}` },
     ],
+    hasImage
+      ? [
+          { text: "🖼 Change image", callback_data: `img:${id}` },
+          { text: "🚫 No image", callback_data: `noimg:${id}` },
+        ]
+      : [{ text: "🖼 Add image", callback_data: `img:${id}` }],
     [
       { text: "🔄 New draft", callback_data: `regen:${id}` },
       { text: "❌ Skip today", callback_data: `skip:${id}` },
     ],
     [{ text: "💡 Write from my idea", callback_data: `idea:${id}` }],
   ];
+}
+
+const IMAGE_LABEL: Record<string, string> = {
+  card: "key takeaways card",
+  flowchart: "flowchart",
+  photo: "your photo",
+  none: "none",
+};
+
+// Sends the image above the draft. Bytes for drawn images, a file id for your photo.
+export async function sendPhoto(photo: ArrayBuffer | string, caption: string): Promise<number> {
+  if (typeof photo === "string") {
+    return (await call<{ message_id: number }>("sendPhoto", { chat_id: env.telegramChatId, photo, caption })).message_id;
+  }
+  const form = new FormData();
+  form.append("chat_id", env.telegramChatId);
+  form.append("caption", caption);
+  form.append("photo", new Blob([photo], { type: "image/png" }), "post.png");
+  const res = await fetch(`https://api.telegram.org/bot${env.telegramToken}/sendPhoto`, {
+    method: "POST",
+    body: form,
+    signal: AbortSignal.timeout(20_000),
+  });
+  const data = (await res.json()) as { ok: boolean; result: { message_id: number }; description?: string };
+  if (!data.ok) throw new Error(`Telegram sendPhoto failed: ${data.description ?? res.status}`);
+  return data.result.message_id;
+}
+
+export async function deleteMessage(messageId: number) {
+  try {
+    await call("deleteMessage", { chat_id: env.telegramChatId, message_id: messageId });
+  } catch {
+    // Already gone or too old (Telegram only allows deleting for 48 hours).
+  }
+}
+
+// Downloads a photo you sent, so it can be uploaded to LinkedIn.
+export async function downloadFile(fileId: string): Promise<ArrayBuffer> {
+  const file = await call<{ file_path: string }>("getFile", { file_id: fileId });
+  const res = await fetch(`https://api.telegram.org/file/bot${env.telegramToken}/${file.file_path}`, {
+    signal: AbortSignal.timeout(20_000),
+  });
+  if (!res.ok) throw new Error(`Could not download your photo from Telegram (HTTP ${res.status}).`);
+  return res.arrayBuffer();
 }
 
 export async function askForIdea() {
@@ -74,14 +132,17 @@ export async function sendDraft(draft: Draft): Promise<number> {
           "Check the facts in the source before posting.",
         ]
   )
-    .concat("━━━━━━━━━━")
+    .concat(
+      `🖼 Image: ${IMAGE_LABEL[draft.image ?? "none"]} (send a photo here to use your own)`,
+      "━━━━━━━━━━",
+    )
     .join("\n");
 
   const msg = await call<{ message_id: number }>("sendMessage", {
     chat_id: env.telegramChatId,
     text: `${header}\n\n${draft.text}`,
     link_preview_options: { is_disabled: true },
-    reply_markup: { inline_keyboard: draftButtons(draft.id) },
+    reply_markup: { inline_keyboard: draftButtons(draft) },
   });
   return msg.message_id;
 }
