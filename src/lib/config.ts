@@ -12,7 +12,11 @@ export const env = {
     return required("GEMINI_API_KEY");
   },
   get geminiModel() {
-    return process.env.GEMINI_MODEL || "gemini-flash-latest";
+    return process.env.GEMINI_MODEL?.trim() || "gemini-flash-latest";
+  },
+  // Lighter model used when the main one is overloaded.
+  get geminiFallbackModel() {
+    return process.env.GEMINI_FALLBACK_MODEL?.trim() || "gemini-flash-lite-latest";
   },
   get telegramToken() {
     return required("TELEGRAM_BOT_TOKEN");

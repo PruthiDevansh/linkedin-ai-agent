@@ -69,8 +69,37 @@ type GeminiResponse = {
   error?: { message?: string };
 };
 
+class GeminiError extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+  ) {
+    super(message);
+  }
+}
+
+// 503 = overloaded, 429 = rate limit, 0 = timeout/network. All usually pass quickly.
+const isBusy = (err: unknown) => err instanceof GeminiError && [0, 429, 500, 503].includes(err.status);
+
+// The free tier gets busy at peak times: retry once, then switch to the lighter model.
 async function callGemini(system: string, prompt: string): Promise<string> {
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${env.geminiModel}:generateContent`;
+  const plan = [env.geminiModel, env.geminiModel, env.geminiFallbackModel];
+  let lastError: unknown;
+  for (const [i, model] of plan.entries()) {
+    try {
+      return await callGeminiModel(model, system, prompt);
+    } catch (err) {
+      if (!isBusy(err)) throw err;
+      lastError = err;
+      console.warn(`Gemini ${model} busy (try ${i + 1}/${plan.length}):`, (err as Error).message);
+      if (i === 0) await new Promise((r) => setTimeout(r, 3_000));
+    }
+  }
+  throw lastError;
+}
+
+async function callGeminiModel(model: string, system: string, prompt: string): Promise<string> {
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
   const res = await fetch(url, {
     method: "POST",
     headers: { "Content-Type": "application/json", "x-goog-api-key": env.geminiKey },
@@ -79,11 +108,13 @@ async function callGemini(system: string, prompt: string): Promise<string> {
       contents: [{ role: "user", parts: [{ text: prompt }] }],
       generationConfig: { responseMimeType: "application/json", temperature: 0.9 },
     }),
-    signal: AbortSignal.timeout(45_000),
+    signal: AbortSignal.timeout(18_000),
+  }).catch((err) => {
+    throw new GeminiError(`Gemini did not answer in time (${err instanceof Error ? err.message : err})`, 0);
   });
-  const data = (await res.json()) as GeminiResponse;
+  const data = (await res.json().catch(() => ({}))) as GeminiResponse;
   if (!res.ok) {
-    throw new Error(`Gemini error ${res.status}: ${data.error?.message ?? "unknown"}`);
+    throw new GeminiError(`Gemini error ${res.status}: ${data.error?.message ?? "unknown"}`, res.status);
   }
   const text = data.candidates?.[0]?.content?.parts?.map((p) => p.text ?? "").join("") ?? "";
   if (!text) throw new Error("Gemini returned an empty answer.");
@@ -118,11 +149,12 @@ export async function writePost(
   const system = systemPrompt(category);
   const prompt = userPrompt(candidates, trending);
 
+  const raw = await callGemini(system, prompt);
   try {
-    return parseContent(await callGemini(system, prompt), candidates);
+    return parseContent(raw, candidates);
   } catch (err) {
     // One retry covers the occasional malformed JSON answer.
-    console.warn("First draft attempt failed, retrying:", err instanceof Error ? err.message : err);
+    console.warn("Draft answer was malformed, retrying:", err instanceof Error ? err.message : err);
     return parseContent(await callGemini(system, prompt), candidates);
   }
 }
