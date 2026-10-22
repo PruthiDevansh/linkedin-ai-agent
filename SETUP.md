@@ -127,6 +127,7 @@ Done! 🎉 Every morning around **8:30 AM India time** you'll get a fresh draft.
 |---|---|
 | `/draft` | Make a draft now on today's topic |
 | `/draft fintech` | Make a draft on a topic: `dotnet`, `ai-models`, `ai-usecases`, `fintech`, `startups`, `career` |
+| `/write your idea` | Turn your own short idea into an engaging post (or just send the idea as a message) |
 | `/topics` | List topics |
 | `/status` | LinkedIn connection status |
 | `/help` | Help |

@@ -1,14 +1,27 @@
 import {
   approveAndPublish,
   createAndSendDraft,
+  createDraftFromIdea,
   linkedInConnectUrl,
   linkedInStatus,
   resendDraft,
   skipDraft,
 } from "../../../../src/lib/agent";
 import { env, secretMatches } from "../../../../src/lib/config";
-import { getDraft, getPendingEdit, setPendingEdit } from "../../../../src/lib/store";
-import { answerCallback, askForEditedText, sendText, type TelegramUpdate } from "../../../../src/lib/telegram";
+import {
+  getDraft,
+  getPendingEdit,
+  isAwaitingIdea,
+  setAwaitingIdea,
+  setPendingEdit,
+} from "../../../../src/lib/store";
+import {
+  answerCallback,
+  askForEditedText,
+  askForIdea,
+  sendText,
+  type TelegramUpdate,
+} from "../../../../src/lib/telegram";
 import { CATEGORIES, CATEGORY_IDS, isCategoryId } from "../../../../src/lib/topics";
 
 export const dynamic = "force-dynamic";
@@ -20,6 +33,8 @@ const HELP = [
   "",
   "/draft — make a draft now (today's topic)",
   "/draft fintech — make a draft on a topic",
+  "/write your idea — turn your own idea into a post",
+  "Or just send me any idea as a message 💡",
   "/topics — list topics",
   "/status — LinkedIn connection",
 ].join("\n");
@@ -59,20 +74,34 @@ async function handleButton(callbackId: string, data: string) {
     edit: "Waiting for your text",
     regen: "Writing a new draft…",
     skip: "Skipped",
+    idea: "Waiting for your idea",
   };
   await answerCallback(callbackId, labels[action]);
 
   if (action === "post") return approveAndPublish(id);
   if (action === "skip") return skipDraft(id);
   if (action === "edit") {
+    await setAwaitingIdea(false);
     await setPendingEdit(id);
     return askForEditedText();
+  }
+  if (action === "idea") {
+    await setPendingEdit(null);
+    await setAwaitingIdea(true);
+    return askForIdea();
   }
   if (action === "regen") {
     const old = await getDraft(id);
     await skipDraft(id);
-    return createAndSendDraft(old?.category);
+    if (old?.category === "idea" && old.idea) return createDraftFromIdea(old.idea);
+    return createAndSendDraft(old && old.category !== "idea" ? old.category : undefined);
   }
+}
+
+async function writeIdea(idea: string) {
+  await setAwaitingIdea(false);
+  await sendText("✍️ Writing a post from your idea…");
+  return createDraftFromIdea(idea.slice(0, 1500));
 }
 
 async function handleText(text: string) {
@@ -92,9 +121,21 @@ async function handleText(text: string) {
     return createAndSendDraft(arg && isCategoryId(arg) ? arg : undefined);
   }
 
-  // Any other text is your edited post, if you tapped ✏️ Edit.
+  if (command === "/write") {
+    const idea = text.slice(command.length).trim();
+    if (idea) return writeIdea(idea);
+    await setPendingEdit(null);
+    await setAwaitingIdea(true);
+    return askForIdea();
+  }
+  if (command.startsWith("/")) return sendText(HELP);
+
+  // Any other text is your edited post if you tapped ✏️ Edit, otherwise an idea.
   const editId = await getPendingEdit();
-  if (!editId) return sendText(HELP);
+  if (!editId) {
+    if (!(await isAwaitingIdea()) && text.length < 15) return sendText(HELP);
+    return writeIdea(text);
+  }
   const draft = await getDraft(editId);
   await setPendingEdit(null);
   if (!draft || draft.status !== "pending") return sendText("That draft is no longer pending.");

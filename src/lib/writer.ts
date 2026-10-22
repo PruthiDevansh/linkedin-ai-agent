@@ -12,27 +12,45 @@ export type PostContent = {
 
 const MAX_POST_CHARS = 2800; // LinkedIn allows 3000
 
+const STYLE_RULES = [
+  `You write LinkedIn posts for ${PROFILE.name}. About them: ${PROFILE.about}`,
+  `Audience: ${PROFILE.audience}.`,
+  "",
+  "Writing style:",
+  ...PROFILE.voice.map((v) => `- ${v}`),
+  "",
+  "How to write a post that spreads on LinkedIn:",
+  "- First line is a hook under 12 words that makes people click 'see more'. No clickbait lies.",
+  "- 120 to 220 words. Short lines with blank lines between them.",
+  "- One clear opinion or lesson, not a news summary.",
+  "- End with a simple question that invites comments.",
+  "- Add 3 to 5 relevant hashtags on the last line, like #dotnet #AI.",
+  "- Do not put any links in the post.",
+];
+
 function systemPrompt(category: CategoryId): string {
   const cat = CATEGORIES[category];
   return [
-    `You write LinkedIn posts for ${PROFILE.name}. About them: ${PROFILE.about}`,
-    `Audience: ${PROFILE.audience}.`,
+    ...STYLE_RULES,
+    "",
     `Today's theme: ${cat.label}. ${cat.angle}`,
-    "",
-    "Writing style:",
-    ...PROFILE.voice.map((v) => `- ${v}`),
-    "",
-    "How to write a post that spreads on LinkedIn:",
-    "- First line is a hook under 12 words that makes people click 'see more'. No clickbait lies.",
-    "- 120 to 220 words. Short lines with blank lines between them.",
-    "- One clear opinion or lesson, not a news summary.",
-    "- End with a simple question that invites comments.",
-    "- Add 3 to 5 relevant hashtags on the last line, like #dotnet #AI.",
-    "- Do not put any links in the post.",
     "",
     "Facts:",
     "- Use only facts that appear in the headlines and snippets you are given. Never invent numbers, names, quotes or dates.",
     "- If a detail is unclear, write it as your opinion or as a question instead.",
+  ].join("\n");
+}
+
+function ideaSystemPrompt(): string {
+  return [
+    ...STYLE_RULES,
+    "",
+    `${PROFILE.name} gives you a short idea, note or experience. Turn it into an engaging post in first person, as ${PROFILE.name}.`,
+    "Keep their meaning and opinion. Add structure, a strong hook and a clear takeaway.",
+    "",
+    "Facts:",
+    "- Use only facts that are in the idea. Never invent numbers, names, companies, quotes, dates or personal stories.",
+    "- If something is missing, write it as an opinion or a question instead of making it up.",
   ].join("\n");
 }
 
@@ -156,5 +174,27 @@ export async function writePost(
     // One retry covers the occasional malformed JSON answer.
     console.warn("Draft answer was malformed, retrying:", err instanceof Error ? err.message : err);
     return parseContent(await callGemini(system, prompt), candidates);
+  }
+}
+
+// Your own short idea -> a full post. No news source involved.
+export async function writeFromIdea(idea: string): Promise<string> {
+  const prompt = [
+    `My idea: ${idea}`,
+    "",
+    'Reply with JSON only: {"post": string}',
+  ].join("\n");
+  const parse = (raw: string) => {
+    const post = (JSON.parse(raw.replace(/^```(?:json)?\s*|\s*```$/g, "")) as { post?: string }).post?.trim();
+    if (!post) throw new Error("Gemini answer had no post text.");
+    return post.slice(0, MAX_POST_CHARS);
+  };
+
+  const raw = await callGemini(ideaSystemPrompt(), prompt);
+  try {
+    return parse(raw);
+  } catch (err) {
+    console.warn("Idea answer was malformed, retrying:", err instanceof Error ? err.message : err);
+    return parse(await callGemini(ideaSystemPrompt(), prompt));
   }
 }

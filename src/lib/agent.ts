@@ -14,7 +14,7 @@ import {
 } from "./store";
 import { removeButtons, sendDraft, sendText } from "./telegram";
 import { categoryForToday, type CategoryId } from "./topics";
-import { writePost } from "./writer";
+import { writeFromIdea, writePost } from "./writer";
 
 const RECONNECT_WARNING_DAYS = 7;
 
@@ -43,6 +43,25 @@ export async function createAndSendDraft(category: CategoryId = categoryForToday
     createdAt: new Date().toISOString(),
   };
   await markLinkUsed(draft.sourceUrl);
+  draft.telegramMessageId = await sendDraft(draft);
+  await saveDraft(draft);
+  return draft;
+}
+
+// Turn your own short idea into a post and send it for approval.
+export async function createDraftFromIdea(idea: string): Promise<Draft> {
+  const text = await writeFromIdea(idea);
+  const draft: Draft = {
+    id: randomUUID().slice(0, 8),
+    category: "idea",
+    idea,
+    topic: idea.slice(0, 80),
+    sourceTitle: "",
+    sourceUrl: "",
+    text,
+    status: "pending",
+    createdAt: new Date().toISOString(),
+  };
   draft.telegramMessageId = await sendDraft(draft);
   await saveDraft(draft);
   return draft;

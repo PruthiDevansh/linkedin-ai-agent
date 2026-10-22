@@ -24,6 +24,8 @@ Built only with free tools: Next.js on Vercel, Vercel Cron, Gemini API, Telegram
 
 Send `/draft fintech` (or any topic) on Telegram for an extra post any day.
 
+Have your own idea? Send `/write` plus a line or two (or just send the idea as a message, or tap **💡 Write from my idea** on any draft). The agent turns it into an engaging post, with the same approve/edit buttons.
+
 ## Run it
 
 - Try it on your computer: `npm install`, then `npm run preview -- ai-models`

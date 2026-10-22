@@ -51,17 +51,31 @@ function draftButtons(id: string): InlineButton[][] {
       { text: "🔄 New draft", callback_data: `regen:${id}` },
       { text: "❌ Skip today", callback_data: `skip:${id}` },
     ],
+    [{ text: "💡 Write from my idea", callback_data: `idea:${id}` }],
   ];
 }
 
+export async function askForIdea() {
+  return call("sendMessage", {
+    chat_id: env.telegramChatId,
+    text: "💡 Send me your idea in a line or two (an opinion, a lesson, something you built or saw). I'll turn it into a post.",
+    reply_markup: { force_reply: true },
+  });
+}
+
 export async function sendDraft(draft: Draft): Promise<number> {
-  const header = [
-    `📝 Today's draft · ${CATEGORIES[draft.category].label}`,
-    `Source: ${draft.sourceTitle}`,
-    draft.sourceUrl,
-    "Check the facts in the source before posting.",
-    "━━━━━━━━━━",
-  ].join("\n");
+  const header = (
+    draft.category === "idea"
+      ? [`📝 Your idea, as a post`, `Idea: ${draft.idea}`]
+      : [
+          `📝 Today's draft · ${CATEGORIES[draft.category].label}`,
+          `Source: ${draft.sourceTitle}`,
+          draft.sourceUrl,
+          "Check the facts in the source before posting.",
+        ]
+  )
+    .concat("━━━━━━━━━━")
+    .join("\n");
 
   const msg = await call<{ message_id: number }>("sendMessage", {
     chat_id: env.telegramChatId,
@@ -99,6 +113,7 @@ export async function registerWebhook() {
   await call("setMyCommands", {
     commands: [
       { command: "draft", description: "Make a draft now (optional: topic)" },
+      { command: "write", description: "Turn your own idea into a post" },
       { command: "topics", description: "List topics" },
       { command: "status", description: "LinkedIn connection status" },
       { command: "help", description: "How this bot works" },

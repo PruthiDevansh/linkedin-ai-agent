@@ -5,7 +5,9 @@ export type DraftStatus = "pending" | "posted" | "skipped";
 
 export type Draft = {
   id: string;
-  category: CategoryId;
+  category: CategoryId | "idea";
+  // Set when the post was written from your own idea instead of the news.
+  idea?: string;
   topic: string;
   sourceTitle: string;
   sourceUrl: string;
@@ -62,6 +64,16 @@ export async function setPendingEdit(id: string | null): Promise<void> {
 
 export async function getPendingEdit(): Promise<string | null> {
   return redis().get<string>("pending_edit");
+}
+
+// After you tap 💡 My idea, your next message is the idea.
+export async function setAwaitingIdea(waiting: boolean): Promise<void> {
+  if (waiting) await redis().set("awaiting_idea", 1, { ex: 60 * 60 });
+  else await redis().del("awaiting_idea");
+}
+
+export async function isAwaitingIdea(): Promise<boolean> {
+  return (await redis().get("awaiting_idea")) !== null;
 }
 
 export async function getUsedLinks(): Promise<Set<string>> {
