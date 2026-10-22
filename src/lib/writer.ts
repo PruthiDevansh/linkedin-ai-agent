@@ -99,24 +99,31 @@ class GeminiError extends Error {
 // 503 = overloaded, 429 = rate limit, 0 = timeout/network. All usually pass quickly.
 const isBusy = (err: unknown) => err instanceof GeminiError && [0, 429, 500, 503].includes(err.status);
 
-// The free tier gets busy at peak times: retry once, then switch to the lighter model.
+// The free tier gets busy or slow at peak times. Give the main model one short
+// chance, then use the faster lite model. Whole plan stays well under Vercel's
+// 60-second limit: 15s + 20s + 20s at most.
 async function callGemini(system: string, prompt: string): Promise<string> {
-  const plan = [env.geminiModel, env.geminiModel, env.geminiFallbackModel];
+  const plan = [
+    { model: env.geminiModel, timeoutMs: 15_000 },
+    { model: env.geminiFallbackModel, timeoutMs: 20_000 },
+    { model: env.geminiFallbackModel, timeoutMs: 20_000 },
+  ];
   let lastError: unknown;
-  for (const [i, model] of plan.entries()) {
+  for (const [i, { model, timeoutMs }] of plan.entries()) {
     try {
-      return await callGeminiModel(model, system, prompt);
+      return await callGeminiModel(model, system, prompt, timeoutMs);
     } catch (err) {
       if (!isBusy(err)) throw err;
       lastError = err;
       console.warn(`Gemini ${model} busy (try ${i + 1}/${plan.length}):`, (err as Error).message);
-      if (i === 0) await new Promise((r) => setTimeout(r, 3_000));
     }
   }
-  throw lastError;
+  throw new Error(
+    `Google's free AI is overloaded right now, please try again in a few minutes. (${(lastError as Error).message})`,
+  );
 }
 
-async function callGeminiModel(model: string, system: string, prompt: string): Promise<string> {
+async function callGeminiModel(model: string, system: string, prompt: string, timeoutMs: number): Promise<string> {
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
   const res = await fetch(url, {
     method: "POST",
@@ -126,7 +133,7 @@ async function callGeminiModel(model: string, system: string, prompt: string): P
       contents: [{ role: "user", parts: [{ text: prompt }] }],
       generationConfig: { responseMimeType: "application/json", temperature: 0.9 },
     }),
-    signal: AbortSignal.timeout(18_000),
+    signal: AbortSignal.timeout(timeoutMs),
   }).catch((err) => {
     throw new GeminiError(`Gemini did not answer in time (${err instanceof Error ? err.message : err})`, 0);
   });
