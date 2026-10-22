@@ -30,9 +30,14 @@ export async function exchangeCode(code: string): Promise<LinkedInToken> {
       client_secret: env.linkedinClientSecret,
     }),
   });
-  const data = (await res.json()) as { access_token?: string; expires_in?: number; error_description?: string };
+  const data = (await res.json().catch(() => ({}))) as {
+    access_token?: string;
+    expires_in?: number;
+    error?: string;
+    error_description?: string;
+  };
   if (!res.ok || !data.access_token) {
-    throw new Error(`LinkedIn login failed: ${data.error_description ?? res.status}`);
+    throw new Error(`token exchange failed (HTTP ${res.status}): ${data.error ?? ""} ${data.error_description ?? ""}`.trim());
   }
 
   const me = await fetch("https://api.linkedin.com/v2/userinfo", {

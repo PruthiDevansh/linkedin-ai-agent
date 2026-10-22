@@ -1,7 +1,8 @@
 import { timingSafeEqual } from "node:crypto";
 
 function required(name: string): string {
-  const value = process.env[name];
+  // Trim: pasted keys often carry a stray space or newline.
+  const value = process.env[name]?.trim();
   if (!value) throw new Error(`Missing environment variable ${name}. See SETUP.md.`);
   return value;
 }

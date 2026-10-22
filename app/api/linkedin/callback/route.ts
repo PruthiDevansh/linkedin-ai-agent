@@ -30,6 +30,8 @@ export async function GET(req: Request) {
     return page("✅ LinkedIn connected. You can close this tab and go back to Telegram.");
   } catch (err) {
     console.error("LinkedIn callback failed:", err);
-    return page("LinkedIn login failed. Check the app settings in SETUP.md and try again.", 500);
+    // LinkedIn's error text never contains secrets, and it's what you need to fix the setup.
+    const reason = (err instanceof Error ? err.message : String(err)).replace(/[<>&]/g, "");
+    return page(`LinkedIn login failed: ${reason}<br><br>Check the app settings in SETUP.md and try again.`, 500);
   }
 }
